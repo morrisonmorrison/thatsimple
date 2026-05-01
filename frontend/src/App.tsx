@@ -1,15 +1,23 @@
-import React, { useEffect, useContext, useCallback } from "react";
+import React, { useEffect, useContext, useCallback, useMemo } from "react";
 
 import Header from "./Components/Headers";
 import Products from "./Components/ProductTypes/Products";
 import Items from "./Components/ProductTypes/Items";
 import Context from "./Context";
+import CapRate from "./Components/CapRate/CapRate";
 
 import styles from "./App.module.css";
 
 const App = () => {
   const { linkSuccess, isPaymentInitiation, itemId, dispatch } =
     useContext(Context);
+
+  // That Simple — lightweight client-side view router via ?view=...
+  const view = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("view") || "";
+  }, []);
+  const isCapRateView = view === "cap-rate";
 
   const getInfo = useCallback(async () => {
     const response = await fetch("/api/info", { method: "POST" });
@@ -59,13 +67,7 @@ const App = () => {
         });
         return;
       }
-      dispatch({
-        type: "SET_STATE",
-        state: {
-          userToken: data.user_token || null,
-          userId: data.user_id || null
-        }
-      });
+      dispatch({ type: "SET_STATE", state: { userToken: data.user_token || null, userId: data.user_id || null } });
       return data.user_token || data.user_id;
     }
   }, [dispatch]);
@@ -86,8 +88,7 @@ const App = () => {
           errorDetail = data.error || {
             error_code: data.error_code || "UNKNOWN",
             error_type: data.error_type || "API_ERROR",
-            error_message:
-              data.error_message || `Request failed with status ${response.status}`,
+            error_message: data.error_message || `Request failed with status ${response.status}`,
           };
         } catch {
           errorDetail = {
@@ -123,8 +124,10 @@ const App = () => {
   );
 
   useEffect(() => {
+    if (isCapRateView) return; // Skip Plaid init when on calculator route
     const init = async () => {
-      const { paymentInitiation, isUserTokenFlow } = await getInfo(); // used to determine which path to take when generating token
+      const { paymentInitiation, isUserTokenFlow } = await getInfo();
+      // used to determine which path to take when generating token
       // do not generate a new token for OAuth redirect; instead
       // setLinkToken from localStorage
       if (window.location.href.includes("?oauth_state_id=")) {
@@ -136,25 +139,31 @@ const App = () => {
         });
         return;
       }
-
       if (isUserTokenFlow) {
         await generateUserToken();
       }
       generateToken(paymentInitiation);
     };
     init();
-  }, [dispatch, generateToken, generateUserToken, getInfo]);
+  }, [dispatch, generateToken, generateUserToken, getInfo, isCapRateView]);
+
+  if (isCapRateView) {
+    return <CapRate />;
+  }
 
   return (
     <div className={styles.App}>
+      <div className="absolute top-4 right-6 text-sm">
+        <a href="/?view=cap-rate" className="text-blue-600 hover:underline">Cap Rate Calculator →</a>
+      </div>
       <div className={styles.container}>
         <Header />
         {linkSuccess && (
           <>
-            <Products />
             {!isPaymentInitiation && itemId && <Items />}
           </>
         )}
+        <Products />
       </div>
     </div>
   );

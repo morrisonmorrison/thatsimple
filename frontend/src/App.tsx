@@ -12,12 +12,15 @@ const App = () => {
   const { linkSuccess, isPaymentInitiation, itemId, dispatch } =
     useContext(Context);
 
-  // That Simple — lightweight client-side view router via ?view=...
+  // That Simple — client-side view router via ?view=...
+  // Default (root) view is the Cap Rate calculator (the user-facing app).
+  // The legacy Plaid Quickstart demo is preserved at ?view=plaid-demo for testing.
   const view = useMemo(() => {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("view") || "";
   }, []);
-  const isCapRateView = view === "cap-rate";
+  const isPlaidDemoView = view === "plaid-demo";
+  const isCapRateView = !isPlaidDemoView;
 
   const getInfo = useCallback(async () => {
     const response = await fetch("/api/info", { method: "POST" });
@@ -28,79 +31,24 @@ const App = () => {
     const data = await response.json();
     const paymentInitiation: boolean =
       data.products.includes("payment_initiation");
-
-    // CRA products are those that start with "cra_"
-    const craProducts = data.products.filter((product: string) =>
-      product.startsWith("cra_")
-    );
-    const isUserTokenFlow: boolean = craProducts.length > 0;
-    const isCraProductsExclusively: boolean =
-      craProducts.length > 0 && craProducts.length === data.products.length;
-
     dispatch({
       type: "SET_STATE",
       state: {
         products: data.products,
         isPaymentInitiation: paymentInitiation,
-        isCraProductsExclusively: isCraProductsExclusively,
-        isUserTokenFlow: isUserTokenFlow,
       },
     });
-    return { paymentInitiation, isUserTokenFlow };
-  }, [dispatch]);
-
-  const generateUserToken = useCallback(async () => {
-    const response = await fetch("/api/create_user_token", { method: "POST" });
-    if (!response.ok) {
-      dispatch({ type: "SET_STATE", state: { userToken: null, userId: null } });
-      return;
-    }
-    const data = await response.json();
-    if (data) {
-      if (data.error != null) {
-        dispatch({
-          type: "SET_STATE",
-          state: {
-            linkToken: null,
-            linkTokenError: data.error,
-          },
-        });
-        return;
-      }
-      dispatch({ type: "SET_STATE", state: { userToken: data.user_token || null, userId: data.user_id || null } });
-      return data.user_token || data.user_id;
-    }
+    return { paymentInitiation };
   }, [dispatch]);
 
   const generateToken = useCallback(
     async (isPaymentInitiation: boolean) => {
-      // Link tokens for 'payment_initiation' use a different creation flow in your backend.
       const path = isPaymentInitiation
         ? "/api/create_link_token_for_payment"
         : "/api/create_link_token";
-      const response = await fetch(path, {
-        method: "POST",
-      });
+      const response = await fetch(path, { method: "POST" });
       if (!response.ok) {
-        let errorDetail;
-        try {
-          const data = await response.json();
-          errorDetail = data.error || {
-            error_code: data.error_code || "UNKNOWN",
-            error_type: data.error_type || "API_ERROR",
-            error_message: data.error_message || `Request failed with status ${response.status}`,
-          };
-        } catch {
-          errorDetail = {
-            error_code: "UNKNOWN",
-            error_type: "API_ERROR",
-            error_message: `Request failed with status ${response.status}`,
-          };
-        }
-        dispatch({
-          type: "SET_STATE",
-          state: { linkToken: null, linkTokenError: errorDetail },
-        });
+        dispatch({ type: "SET_STATE", state: { linkToken: null } });
         return;
       }
       const data = await response.json();
@@ -108,44 +56,52 @@ const App = () => {
         if (data.error != null) {
           dispatch({
             type: "SET_STATE",
-            state: {
-              linkToken: null,
-              linkTokenError: data.error,
-            },
+            state: { linkToken: null, linkTokenError: data.error },
           });
           return;
         }
         dispatch({ type: "SET_STATE", state: { linkToken: data.link_token } });
       }
-      // Save the link_token to be used later in the Oauth flow.
       localStorage.setItem("link_token", data.link_token);
     },
     [dispatch]
   );
 
+  const generateUserToken = useCallback(async () => {
+    const response = await fetch("/api/create_user_token", { method: "POST" });
+    if (!response.ok) {
+      dispatch({ type: "SET_STATE", state: { userToken: null } });
+      return;
+    }
+    const data = await response.json();
+    if (data) {
+      if (data.error != null) {
+        dispatch({ type: "SET_STATE", state: { userToken: null } });
+        return;
+      }
+      dispatch({ type: "SET_STATE", state: { userToken: data.user_token } });
+    }
+  }, [dispatch]);
+
   useEffect(() => {
-    if (isCapRateView) return; // Skip Plaid init when on calculator route
+    if (!isPlaidDemoView) return; // Skip Plaid init on the calculator route
     const init = async () => {
-      const { paymentInitiation, isUserTokenFlow } = await getInfo();
-      // used to determine which path to take when generating token
-      // do not generate a new token for OAuth redirect; instead
-      // setLinkToken from localStorage
+      const { paymentInitiation } = await getInfo();
       if (window.location.href.includes("?oauth_state_id=")) {
         dispatch({
           type: "SET_STATE",
-          state: {
-            linkToken: localStorage.getItem("link_token"),
-          },
+          state: { linkToken: localStorage.getItem("link_token") },
         });
         return;
       }
+      const isUserTokenFlow = process.env.REACT_APP_USER_TOKEN === "true";
       if (isUserTokenFlow) {
         await generateUserToken();
       }
       generateToken(paymentInitiation);
     };
     init();
-  }, [dispatch, generateToken, generateUserToken, getInfo, isCapRateView]);
+  }, [dispatch, generateToken, generateUserToken, getInfo, isPlaidDemoView]);
 
   if (isCapRateView) {
     return <CapRate />;
@@ -154,7 +110,7 @@ const App = () => {
   return (
     <div className={styles.App}>
       <div className="absolute top-4 right-6 text-sm">
-        <a href="/?view=cap-rate" className="text-blue-600 hover:underline">Cap Rate Calculator →</a>
+        <a href="/" className="text-blue-600 hover:underline">← Back to Cap Rate</a>
       </div>
       <div className={styles.container}>
         <Header />

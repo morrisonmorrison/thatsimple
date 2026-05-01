@@ -30,100 +30,189 @@ function monthlyPI(principal: number, annualRatePct: number, years: number): num
   return (principal * r) / (1 - Math.pow(1 + r, -n));
 }
 
-function money(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-function pct(n: number): string {
-  return `${n.toFixed(2)}%`;
-}
-
-interface Field {
-  key: keyof Inputs;
-  label: string;
-  prefix?: string;
-  suffix?: string;
-  step?: number;
-}
-const FIELDS: Field[] = [
-  { key: "price", label: "Purchase price", prefix: "$", step: 1000 },
-  { key: "grossMonthlyRent", label: "Gross monthly rent", prefix: "$", step: 50 },
-  { key: "vacancyPct", label: "Vacancy", suffix: "%", step: 0.5 },
-  { key: "monthlyOpEx", label: "Monthly operating expenses", prefix: "$", step: 25 },
-  { key: "downPaymentPct", label: "Down payment", suffix: "%", step: 1 },
-  { key: "interestRatePct", label: "Interest rate", suffix: "%", step: 0.125 },
-  { key: "loanTermYears", label: "Loan term (years)", step: 1 },
-];
+const fmtUSD = (n: number) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
+    isFinite(n) ? n : 0
+  );
+const fmtPct = (n: number) => `${(isFinite(n) ? n : 0).toFixed(2)}%`;
+const fmtRatio = (n: number) => (isFinite(n) ? n : 0).toFixed(2);
 
 const CapRate: React.FC = () => {
   const [inputs, setInputs] = useState<Inputs>(DEFAULTS);
 
-  const results = useMemo(() => {
-    const grossAnnual = inputs.grossMonthlyRent * 12;
-    const vacancyLoss = grossAnnual * (inputs.vacancyPct / 100);
-    const effectiveGrossIncome = grossAnnual - vacancyLoss;
-    const annualOpEx = inputs.monthlyOpEx * 12;
-    const noi = effectiveGrossIncome - annualOpEx;
-    const capRate = inputs.price > 0 ? (noi / inputs.price) * 100 : 0;
-    const downPayment = inputs.price * (inputs.downPaymentPct / 100);
-    const loanAmount = inputs.price - downPayment;
-    const piMonthly = monthlyPI(loanAmount, inputs.interestRatePct, inputs.loanTermYears);
-    const annualDebtService = piMonthly * 12;
-    const monthlyCashFlow = noi / 12 - piMonthly;
-    const annualCashFlow = monthlyCashFlow * 12;
-    const cashOnCash = downPayment > 0 ? (annualCashFlow / downPayment) * 100 : 0;
-    const dscr = annualDebtService > 0 ? noi / annualDebtService : 0;
-    return { noi, capRate, downPayment, loanAmount, piMonthly, monthlyCashFlow, annualCashFlow, cashOnCash, dscr };
-  }, [inputs]);
-
-  const update = (key: keyof Inputs, value: string) => {
-    const num = parseFloat(value);
-    setInputs((s) => ({ ...s, [key]: isNaN(num) ? 0 : num }));
+  const set = <K extends keyof Inputs>(key: K) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setInputs((prev) => ({ ...prev, [key]: v === "" ? 0 : Number(v) }));
   };
 
+  const results = useMemo(() => {
+    const grossAnnualRent = inputs.grossMonthlyRent * 12;
+    const vacancyLoss = grossAnnualRent * (inputs.vacancyPct / 100);
+    const effectiveGrossIncome = grossAnnualRent - vacancyLoss;
+    const annualOpEx = inputs.monthlyOpEx * 12;
+    const noi = effectiveGrossIncome - annualOpEx;
+    const capRatePct = inputs.price > 0 ? (noi / inputs.price) * 100 : 0;
+
+    const downPayment = inputs.price * (inputs.downPaymentPct / 100);
+    const loanAmount = inputs.price - downPayment;
+    const mPI = monthlyPI(loanAmount, inputs.interestRatePct, inputs.loanTermYears);
+    const annualDebtService = mPI * 12;
+
+    const monthlyCashFlow = noi / 12 - mPI;
+    const annualCashFlow = monthlyCashFlow * 12;
+    const cocReturnPct = downPayment > 0 ? (annualCashFlow / downPayment) * 100 : 0;
+    const dscr = annualDebtService > 0 ? noi / annualDebtService : 0;
+
+    return {
+      noi,
+      capRatePct,
+      downPayment,
+      loanAmount,
+      mPI,
+      monthlyCashFlow,
+      annualCashFlow,
+      cocReturnPct,
+      dscr,
+    };
+  }, [inputs]);
+
   return (
-    <div className="min-h-screen bg-white">
-      <div className="mx-auto max-w-3xl px-6 py-10">
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">Cap Rate Calculator</h1>
-          <p className="mt-1 text-gray-600">Quick rental property analysis — NOI, Cap Rate, Cash-on-Cash, DSCR.</p>
-        </header>
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-8">
-          {FIELDS.map((f) => (
-            <label key={f.key} className="flex flex-col text-sm">
-              <span className="mb-1 font-medium text-gray-700">{f.label}</span>
-              <div className="relative">
-                {f.prefix && (<span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">{f.prefix}</span>)}
-                <input type="number" step={f.step} value={inputs[f.key]} onChange={(e) => update(f.key, e.target.value)} className={`w-full rounded border border-gray-300 py-2 ${f.prefix ? "pl-7" : "pl-3"} ${f.suffix ? "pr-8" : "pr-3"} focus:border-black focus:outline-none`} />
-                {f.suffix && (<span className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400">{f.suffix}</span>)}
-              </div>
-            </label>
-          ))}
+    <div style={{ minHeight: "100vh", background: "#fafafa", color: "#111" }}>
+      {/* Header */}
+      <header
+        style={{
+          borderBottom: "1px solid #eaeaea",
+          background: "#fff",
+          padding: "16px 24px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 6,
+              background: "#111",
+              color: "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 700,
+              fontSize: 14,
+            }}
+          >
+            T
+          </div>
+          <strong style={{ fontSize: 16 }}>That Simple</strong>
+          <span style={{ color: "#888", fontSize: 13 }}>— Rental Property Calculator</span>
+        </div>
+        <a href="/?view=plaid-demo" style={{ fontSize: 12, color: "#888", textDecoration: "none" }}>
+          plaid demo →
+        </a>
+      </header>
+
+      {/* Main */}
+      <main style={{ maxWidth: 920, margin: "32px auto", padding: "0 24px" }}>
+        <h1 style={{ fontSize: 28, margin: "0 0 6px" }}>Cap Rate Calculator</h1>
+        <p style={{ color: "#555", margin: "0 0 24px" }}>
+          Quick rental property analysis — NOI, Cap Rate, Cash-on-Cash, DSCR.
+        </p>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 16,
+            background: "#fff",
+            border: "1px solid #eaeaea",
+            borderRadius: 12,
+            padding: 20,
+          }}
+        >
+          <Field label="Purchase price" prefix="$" value={inputs.price} onChange={set("price")} />
+          <Field label="Gross monthly rent" prefix="$" value={inputs.grossMonthlyRent} onChange={set("grossMonthlyRent")} />
+          <Field label="Vacancy" suffix="%" value={inputs.vacancyPct} onChange={set("vacancyPct")} />
+          <Field label="Monthly operating expenses" prefix="$" value={inputs.monthlyOpEx} onChange={set("monthlyOpEx")} />
+          <Field label="Down payment" suffix="%" value={inputs.downPaymentPct} onChange={set("downPaymentPct")} />
+          <Field label="Interest rate" suffix="%" value={inputs.interestRatePct} onChange={set("interestRatePct")} />
+          <Field label="Loan term (years)" value={inputs.loanTermYears} onChange={set("loanTermYears")} />
+        </div>
+
+        {/* Results */}
+        <section
+          style={{
+            marginTop: 20,
+            background: "#fff",
+            border: "1px solid #eaeaea",
+            borderRadius: 12,
+            padding: 20,
+          }}
+        >
+          <h2 style={{ fontSize: 18, margin: "0 0 16px" }}>Results</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+            <Stat label="Net Operating Income (NOI)" value={fmtUSD(results.noi)} />
+            <Stat label="Cap Rate" value={fmtPct(results.capRatePct)} highlight />
+            <Stat label="Down Payment" value={fmtUSD(results.downPayment)} />
+            <Stat label="Loan Amount" value={fmtUSD(results.loanAmount)} />
+            <Stat label="Monthly P&I" value={fmtUSD(results.mPI)} />
+            <Stat label="Monthly Cash Flow" value={fmtUSD(results.monthlyCashFlow)} highlight />
+            <Stat label="Annual Cash Flow" value={fmtUSD(results.annualCashFlow)} />
+            <Stat label="Cash-on-Cash Return" value={fmtPct(results.cocReturnPct)} highlight />
+            <Stat label="DSCR" value={fmtRatio(results.dscr)} />
+          </div>
+          <p style={{ color: "#888", fontSize: 12, marginTop: 16 }}>
+            Estimates only. Excludes capex reserves, closing costs, escrows beyond op-ex, and tax effects.
+          </p>
         </section>
-        <section className="rounded-lg border border-gray-200 bg-gray-50 p-6">
-          <h2 className="mb-4 text-lg font-semibold">Results</h2>
-          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Result label="Net Operating Income (NOI)" value={money(results.noi)} />
-            <Result label="Cap Rate" value={pct(results.capRate)} highlight />
-            <Result label="Down payment" value={money(results.downPayment)} />
-            <Result label="Loan amount" value={money(results.loanAmount)} />
-            <Result label="Monthly P&I" value={money(results.piMonthly)} />
-            <Result label="Monthly cash flow" value={money(results.monthlyCashFlow)} highlight />
-            <Result label="Annual cash flow" value={money(results.annualCashFlow)} />
-            <Result label="Cash-on-Cash return" value={pct(results.cashOnCash)} highlight />
-            <Result label="DSCR" value={results.dscr.toFixed(2)} />
-          </dl>
-          <p className="mt-4 text-xs text-gray-500">Estimates only. Excludes capex reserves, closing costs, escrows beyond op-ex, and tax effects.</p>
-        </section>
-        <div className="mt-8 text-sm"><a href="/" className="text-blue-600 hover:underline">← Back to home</a></div>
-      </div>
+
+        <footer style={{ color: "#999", fontSize: 12, textAlign: "center", margin: "32px 0 24px" }}>
+          © {new Date().getFullYear()} That Simple — built for real-estate investors.
+        </footer>
+      </main>
     </div>
   );
 };
 
-const Result: React.FC<{ label: string; value: string; highlight?: boolean }> = ({ label, value, highlight }) => (
+const Field: React.FC<{
+  label: string;
+  value: number;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  prefix?: string;
+  suffix?: string;
+}> = ({ label, value, onChange, prefix, suffix }) => (
+  <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "#444" }}>
+    {label}
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        border: "1px solid #ddd",
+        borderRadius: 8,
+        padding: "8px 10px",
+        background: "#fff",
+      }}
+    >
+      {prefix && <span style={{ color: "#888", marginRight: 6 }}>{prefix}</span>}
+      <input
+        type="number"
+        value={value}
+        onChange={onChange}
+        style={{ flex: 1, border: "none", outline: "none", fontSize: 14, color: "#111", background: "transparent" }}
+      />
+      {suffix && <span style={{ color: "#888", marginLeft: 6 }}>{suffix}</span>}
+    </div>
+  </label>
+);
+
+const Stat: React.FC<{ label: string; value: string; highlight?: boolean }> = ({ label, value, highlight }) => (
   <div>
-    <dt className="text-xs uppercase tracking-wide text-gray-500">{label}</dt>
-    <dd className={`mt-1 text-lg ${highlight ? "font-bold text-black" : "font-medium text-gray-900"}`}>{value}</dd>
+    <div style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+    <div style={{ fontSize: 20, fontWeight: highlight ? 700 : 500, color: highlight ? "#0a7" : "#111", marginTop: 2 }}>
+      {value}
+    </div>
   </div>
 );
 
